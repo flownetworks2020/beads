@@ -144,6 +144,8 @@ var mutationEntryPoints = []string{
 // create/update/close/delete/dep/label op vocabulary. The staleness check fails
 // if any stops being flagged, so an exemption cannot rot.
 var beadDMLExemptions = map[string]string{
+	"TouchRowVersionInTx":               "revision-only helper inside the label/dependency mutation transaction; the caller journals the actual mutation",
+	"TouchDependencyRemovalSourcesInTx": "revision-only helper before node/edge deletion; the enclosing deletion journals each removed edge and node",
 	// (1) Child counters are derived CLI acceleration state. In contrast,
 	// is_blocked is part of the exported bead snapshot and its recompute helpers
 	// structurally journal every value that actually changes.

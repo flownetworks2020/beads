@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -106,15 +107,25 @@ func (r *dependencySQLRepositoryImpl) Insert(ctx context.Context, dep *types.Dep
 	}
 	table := pickDepTable(opts.UseWispsTable)
 
-	var existingType string
+	var existingType, existingMetadata string
 	err := r.runner.QueryRowContext(ctx,
 		//nolint:gosec // G201: table and depTargetExpr are hardcoded constants
-		fmt.Sprintf("SELECT type FROM %s WHERE issue_id = ? AND %s = ?", table, depTargetExpr),
+		fmt.Sprintf("SELECT type, metadata FROM %s WHERE issue_id = ? AND %s = ?", table, depTargetExpr),
 		dep.IssueID, dep.DependsOnID,
-	).Scan(&existingType)
+	).Scan(&existingType, &existingMetadata)
 	switch {
 	case err == nil:
 		if existingType == string(dep.Type) {
+			before, after := json.RawMessage(existingMetadata), json.RawMessage(metadata)
+			same, err := storage.MetadataValuesEqual(&before, &after)
+			if err != nil {
+				return fmt.Errorf("compare dependency metadata: %w", err)
+			}
+			if !same {
+				if err := issueops.TouchRowVersionInTx(ctx, r.runner, pickIssueTable(opts.UseWispsTable), dep.IssueID); err != nil {
+					return err
+				}
+			}
 			//nolint:gosec // G201: table and depTargetExpr are hardcoded constants
 			if _, err := r.runner.ExecContext(ctx,
 				fmt.Sprintf("UPDATE %s SET metadata = ? WHERE issue_id = ? AND %s = ?", table, depTargetExpr),
@@ -162,6 +173,10 @@ func (r *dependencySQLRepositoryImpl) Insert(ctx context.Context, dep *types.Dep
 		if err := issueops.TouchDependencyCoordinationTableInTx(ctx, r.runner, dep.DependsOnID, table); err != nil {
 			return fmt.Errorf("db: DependencySQLRepository.Insert: %w", err)
 		}
+	}
+
+	if err := issueops.TouchRowVersionInTx(ctx, r.runner, pickIssueTable(opts.UseWispsTable), dep.IssueID); err != nil {
+		return err
 	}
 
 	// Record the dependency_added event on the source's event table, matching the
@@ -352,6 +367,10 @@ func (r *dependencySQLRepositoryImpl) Delete(ctx context.Context, issueID, depen
 		issueID, dependsOnID,
 	); err != nil {
 		return domain.DepDeleteResult{}, fmt.Errorf("db: DependencySQLRepository.Delete: %s -> %s: %w", issueID, dependsOnID, err)
+	}
+
+	if err := issueops.TouchRowVersionInTx(ctx, r.runner, pickIssueTable(opts.UseWispsTable), issueID); err != nil {
+		return domain.DepDeleteResult{}, err
 	}
 
 	// The type lookup above returned Found:false when no edge existed, so reaching
@@ -788,6 +807,9 @@ func (r *dependencySQLRepositoryImpl) DeleteAllForIDs(ctx context.Context, ids [
 		// source snapshots are still readable.
 		if err := issueops.RecordDependencyRemovalsForTableInTx(ctx, r.runner, table, batch, actor); err != nil {
 			return total, fmt.Errorf("db: DependencySQLRepository.DeleteAllForIDs journal removals from %s: %w", table, err)
+		}
+		if err := issueops.TouchDependencyRemovalSourcesInTx(ctx, r.runner, table, batch); err != nil {
+			return total, err
 		}
 		//nolint:gosec // G201: table is one of two hardcoded constants; ? placeholders only.
 		res, err := r.runner.ExecContext(ctx,

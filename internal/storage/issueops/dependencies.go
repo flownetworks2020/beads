@@ -3,10 +3,12 @@ package issueops
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
 
+	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/depid"
 	"github.com/steveyegge/beads/internal/storage/domain"
 	"github.com/steveyegge/beads/internal/storage/sqlbuild"
@@ -105,6 +107,8 @@ func ClassifyDepTarget(ctx context.Context, tx DBTX, dep *types.Dependency, isCr
 // routing (e.g., DoltStore with its pre-tx wisp cache) can set fields
 // explicitly to skip the redundant DB check.
 type AddDependencyOpts struct {
+	// SourceChanged reports revision invalidation separately from audit emission.
+	SourceChanged *bool
 	// SourceTable is the table to validate the source issue exists in.
 	// Auto-detected via wisp routing if empty.
 	SourceTable string
@@ -171,6 +175,9 @@ type DepTargetPrecheck struct {
 // Dolt commit stage the events table only when an event row exists, so a
 // no-event add cannot sweep unrelated pending rows into the commit (GH#2455).
 func AddDependencyInTx(ctx context.Context, tx *sql.Tx, dep *types.Dependency, actor string, opts AddDependencyOpts) (bool, error) {
+	if opts.SourceChanged != nil {
+		*opts.SourceChanged = false
+	}
 	return addDependencyInTx(ctx, tx, dep, actor, opts, nil)
 }
 
@@ -258,12 +265,25 @@ func addDependencyInTx(ctx context.Context, tx *sql.Tx, dep *types.Dependency, a
 	// Check for existing dependency between the same pair. Use the resolved
 	// target expression defensively so stale/reclassified rows in another typed
 	// target column cannot bypass the idempotency/conflict check.
-	var existingType string
+	var existingType, existingMetadata string
 	//nolint:gosec // G201: writeTable from WispTableRouting; depTargetEquals has no user input.
-	err := tx.QueryRowContext(ctx, fmt.Sprintf(`SELECT type FROM %s WHERE issue_id = ? AND %s`, writeTable, depTargetEquals("")),
-		dep.IssueID, dep.DependsOnID).Scan(&existingType)
+	err := tx.QueryRowContext(ctx, fmt.Sprintf(`SELECT type, metadata FROM %s WHERE issue_id = ? AND %s`, writeTable, depTargetEquals("")),
+		dep.IssueID, dep.DependsOnID).Scan(&existingType, &existingMetadata)
 	if err == nil {
 		if existingType == string(dep.Type) {
+			before, after := json.RawMessage(existingMetadata), json.RawMessage(metadata)
+			same, err := storage.MetadataValuesEqual(&before, &after)
+			if err != nil {
+				return false, fmt.Errorf("compare dependency metadata: %w", err)
+			}
+			if !same {
+				if err := TouchRowVersionInTx(ctx, tx, sourceTable, dep.IssueID); err != nil {
+					return false, err
+				}
+				if opts.SourceChanged != nil {
+					*opts.SourceChanged = true
+				}
+			}
 			// Same type — idempotent; update metadata. No event is written, so the
 			// caller must not stage the events table for this re-add.
 			//nolint:gosec // G201: writeTable from WispTableRouting; depTargetEquals has no user input.
@@ -303,6 +323,12 @@ func addDependencyInTx(ctx context.Context, tx *sql.Tx, dep *types.Dependency, a
 		}
 	}
 
+	if err := TouchRowVersionInTx(ctx, tx, sourceTable, dep.IssueID); err != nil {
+		return false, err
+	}
+	if opts.SourceChanged != nil {
+		*opts.SourceChanged = true
+	}
 	srcIsWisp := writeTable == "wisp_dependencies"
 
 	// Record the dependency_added event on the source issue's event table so the
@@ -989,6 +1015,34 @@ func checkRenameTargetCollision(ctx context.Context, tx DBTX, table, typedCol, n
 	return fmt.Errorf("rename to %s collides with existing dependency target in %s", newID, table)
 }
 
+// TouchDependencyRemovalSourcesInTx invalidates surviving sources before a
+// target deletion or rename changes their outbound edges, including cascades.
+// The caller must complete that operation in this same transaction.
+func TouchDependencyRemovalSourcesInTx(ctx context.Context, tx DBTX, table string, ids []string) error {
+	edges, err := dependencyEdgesInTableForIssueIDsInTx(ctx, tx, table, ids)
+	if err != nil {
+		return err
+	}
+	issueTable := "issues"
+	if table == "wisp_dependencies" {
+		issueTable = "wisps"
+	}
+	seen := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		seen[id] = true // Deleted sources have no surviving revision.
+	}
+	for _, edge := range edges {
+		if seen[edge.source] {
+			continue
+		}
+		if err := TouchRowVersionInTx(ctx, tx, issueTable, edge.source); err != nil {
+			return err
+		}
+		seen[edge.source] = true
+	}
+	return nil
+}
+
 // RemoveDependencyInTx removes a dependency between two issues within an
 // existing transaction. Automatically routes to wisp_dependencies if the
 // source issue is an active wisp. When emitEvent is set and a row is actually
@@ -1004,15 +1058,19 @@ func checkRenameTargetCollision(ctx context.Context, tx DBTX, table, typedCol, n
 // that stage tables for a Dolt commit stage the events table only when an event
 // row exists (avoiding the sweep-unrelated-rows hazard doltAddAndCommit guards
 // against, GH#2455).
-//
-//nolint:gosec // G201: depTable from WispTableRouting (hardcoded constants)
 func RemoveDependencyInTx(ctx context.Context, tx *sql.Tx, issueID, dependsOnID, actor string, emitEvent bool) (bool, error) {
-	return removeDependencyInTx(ctx, tx, issueID, dependsOnID, actor, emitEvent, nil)
+	return removeDependencyInTx(ctx, tx, issueID, dependsOnID, actor, emitEvent, nil, nil)
 }
 
-func removeDependencyInTx(ctx context.Context, tx *sql.Tx, issueID, dependsOnID, actor string, emitEvent bool, recomputeResult *RecomputeIsBlockedResult) (bool, error) {
+// RemoveDependencyWithResultInTx separates source revision changes from audit emission.
+func RemoveDependencyWithResultInTx(ctx context.Context, tx *sql.Tx, issueID, dependsOnID, actor string, emitEvent bool) (removed, eventWritten bool, err error) {
+	eventWritten, err = removeDependencyInTx(ctx, tx, issueID, dependsOnID, actor, emitEvent, nil, &removed)
+	return
+}
+
+func removeDependencyInTx(ctx context.Context, tx *sql.Tx, issueID, dependsOnID, actor string, emitEvent bool, recomputeResult *RecomputeIsBlockedResult, sourceChanged *bool) (bool, error) {
 	isWisp := IsActiveWispInTx(ctx, tx, issueID)
-	_, _, eventTable, depTable := WispTableRouting(isWisp)
+	issueTable, _, eventTable, depTable := WispTableRouting(isWisp)
 
 	// Capture the row's type before deleting so we can dispatch the right
 	// affected-set helper. If no row matches, treat as a no-op.
@@ -1031,6 +1089,13 @@ func removeDependencyInTx(ctx context.Context, tx *sql.Tx, issueID, dependsOnID,
 		`DELETE FROM %s WHERE issue_id = ? AND %s = ?`, depTable, DepTargetExpr),
 		issueID, dependsOnID); err != nil {
 		return false, fmt.Errorf("remove dependency: %w", err)
+	}
+
+	if err := TouchRowVersionInTx(ctx, tx, issueTable, issueID); err != nil {
+		return false, err
+	}
+	if sourceChanged != nil {
+		*sourceChanged = true
 	}
 
 	// The lookup above returned early when no row matched, so reaching here means

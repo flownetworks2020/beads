@@ -44,6 +44,11 @@ func DeleteIssueInTx(ctx context.Context, tx *sql.Tx, id string, actor string) e
 	if err := RecordDependencyRemovalsForIssuesInTx(ctx, tx, []string{id}, actor); err != nil {
 		return fmt.Errorf("journal dependency removals for %s: %w", id, err)
 	}
+	for _, table := range []string{"dependencies", "wisp_dependencies"} {
+		if err := TouchDependencyRemovalSourcesInTx(ctx, tx, table, []string{id}); err != nil {
+			return err
+		}
+	}
 	if err := deleteIssueRowInTx(ctx, tx, id, isWisp, actor); err != nil {
 		return err
 	}
@@ -345,6 +350,11 @@ func DeleteResolvedSetInTx(ctx context.Context, tx *sql.Tx, set DeletionSet, dry
 	// still be read.
 	if err := RecordDependencyRemovalsForIssuesInTx(ctx, tx, set.All, actor); err != nil {
 		return nil, fmt.Errorf("journal dependency removals for batch delete: %w", err)
+	}
+	for _, table := range []string{"dependencies", "wisp_dependencies"} {
+		if err := TouchDependencyRemovalSourcesInTx(ctx, tx, table, set.All); err != nil {
+			return nil, err
+		}
 	}
 
 	for _, id := range set.WispIDs {

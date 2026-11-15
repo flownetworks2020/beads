@@ -211,6 +211,11 @@ func DeleteIssuesBySourceRepoInTx(ctx context.Context, tx *sql.Tx, sourceRepo st
 		return 0, fmt.Errorf("journal dependency removals for source-repo delete: %w", err)
 	}
 
+	for _, table := range []string{"dependencies", "wisp_dependencies"} {
+		if err := TouchDependencyRemovalSourcesInTx(ctx, tx, table, issueIDs); err != nil {
+			return 0, err
+		}
+	}
 	result, err := tx.ExecContext(ctx, `DELETE FROM issues WHERE source_repo = ?`, sourceRepo)
 	if err != nil {
 		return 0, fmt.Errorf("delete issues: %w", err)
@@ -241,6 +246,15 @@ func DeleteIssuesBySourceRepoInTx(ctx context.Context, tx *sql.Tx, sourceRepo st
 
 //nolint:gosec // G201: table names are hardcoded
 func UpdateIssueIDInTx(ctx context.Context, tx *sql.Tx, oldID, newID string, issue *types.Issue, actor string) error {
+	if oldID != newID {
+		// Capture and invalidate inbound sources before the target ID cascades.
+		// Their outbound edge changes even if no lifecycle field changes.
+		for _, table := range []string{"dependencies", "wisp_dependencies"} {
+			if err := TouchDependencyRemovalSourcesInTx(ctx, tx, table, []string{oldID}); err != nil {
+				return err
+			}
+		}
+	}
 	// Capture the edges under the OLD id before the rename rewrites them; they
 	// are what the journal replays as a remove/re-add pair around the identity
 	// change.

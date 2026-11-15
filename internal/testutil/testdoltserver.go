@@ -19,6 +19,7 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 	"github.com/testcontainers/testcontainers-go/modules/dolt"
+	"github.com/testcontainers/testcontainers-go/wait"
 )
 
 // doltServer represents a running test Dolt container instance.
@@ -143,6 +144,9 @@ func startDoltContainer() error {
 
 	ctr, err := dolt.Run(ctx, DoltDockerImage,
 		dolt.WithDatabase("beads_test"),
+		// The module initializes its database before returning. Wait for the
+		// published port as well as its log so forwarded Docker hosts are ready.
+		testcontainers.WithAdditionalWaitStrategy(wait.ForListeningPort("3306/tcp").SkipInternalCheck()),
 		// Docker port-forwarding makes connections appear as non-localhost
 		// (e.g., 172.17.0.1). The entrypoint defaults DOLT_ROOT_HOST to
 		// "localhost", so root@localhost won't match external connections.

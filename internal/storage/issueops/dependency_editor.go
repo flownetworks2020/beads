@@ -163,7 +163,9 @@ func addDependencyEdgeInTx(ctx context.Context, tx *sql.Tx, request publicops.Ad
 	sourceTable, _, eventTable, depTable := WispTableRouting(sourceIsWisp)
 
 	dep := &types.Dependency{IssueID: edge.IssueID, DependsOnID: edge.DependsOnID, Type: edge.Type}
+	var sourceChanged bool
 	eventWritten, err := AddDependencyInTx(ctx, tx, dep, request.Actor, AddDependencyOpts{
+		SourceChanged:  &sourceChanged,
 		SourceTable:    sourceTable,
 		WriteTable:     depTable,
 		IsCrossPrefix:  types.ExtractPrefix(edge.IssueID) != types.ExtractPrefix(edge.DependsOnID),
@@ -183,20 +185,15 @@ func addDependencyEdgeInTx(ctx context.Context, tx *sql.Tx, request publicops.Ad
 	// commits nothing, which is right — the wisp plane is dolt-ignored and has
 	// no version history to write.
 	//
-	// This is NOT every table the edge wrote. A blocking edge also flips the
-	// source's is_blocked (markDirectBlockingDependencySourceInTx, then
-	// MarkIsBlockedInTx over the affected ids), and neither `issues` nor any
-	// other issue-plane table is ever staged here. On an issue-sourced
-	// blocking add the flip therefore stays in the working set and is swept up
-	// by whatever command auto-commits next — including one that was REFUSED,
-	// which then shows up in history having changed nothing of its own. That
-	// predates this role: origin/main's dolt.AddDependencyWithOptions staged
-	// the same {dependencies, events} pair. Tracked as bd-2y9ke; fixing it
-	// changes what every dep-add commit contains and belongs in its own change
-	// with its own tests, so do not widen the set here without reading that
-	// bead first.
+	// The guarded-selection contract now remints the source revision with
+	// its outgoing edge. Stage that row with the edge to preserve the token
+	// across reopen. This also stages the derived source is_blocked change
+	// previously documented here as bd-2y9ke; durability tests cover both.
 	tables := ChangedTables{}
 	tables.Add(depTable)
+	if sourceChanged {
+		tables.Add(sourceTable)
+	}
 	if eventWritten {
 		tables.Add(eventTable)
 	}
@@ -246,7 +243,7 @@ func ExecuteRemoveDependency(ctx context.Context, tx *sql.Tx, request publicops.
 	// the delete actually touched or the commit sweeps rows it never wrote
 	// (GH#2455). ChangedTables drops the wisp tables itself.
 	sourceIsWisp := IsActiveWispInTx(ctx, tx, request.IssueID)
-	_, _, eventTable, depTable := WispTableRouting(sourceIsWisp)
+	sourceTable, _, eventTable, depTable := WispTableRouting(sourceIsWisp)
 
 	// RemoveDependencyInTx reports whether it recorded an event, which on the
 	// explicit-verb path is exactly "an edge was there and is gone" — it
@@ -259,6 +256,6 @@ func ExecuteRemoveDependency(ctx context.Context, tx *sql.Tx, request publicops.
 		return publicops.RemoveDependencyResult{Removed: false}, nil, nil
 	}
 	tables := ChangedTables{}
-	tables.Add(depTable, eventTable)
+	tables.Add(sourceTable, depTable, eventTable)
 	return publicops.RemoveDependencyResult{Removed: true}, tables, nil
 }

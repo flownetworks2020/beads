@@ -146,10 +146,20 @@ func (t *embeddedTransaction) ReopenIssueWithResult(ctx context.Context, id stri
 }
 
 func (t *embeddedTransaction) DeleteIssue(ctx context.Context, id string) error {
+	isWisp := issueops.IsActiveWispInTx(ctx, t.tx, id)
+	if isWisp {
+		var hasDurableSources bool
+		if err := t.tx.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM dependencies WHERE depends_on_wisp_id = ? AND issue_id <> ?)", id, id).Scan(&hasDurableSources); err != nil {
+			return err
+		}
+		if hasDurableSources {
+			t.dirty.MarkDirty("issues")
+		}
+	}
 	// Shared with the dolt path so the two cannot drift again; the hand-listed
 	// set here previously omitted child_counters and the snapshot tables, which
 	// the cascade also empties.
-	for _, cascaded := range issueops.DeleteCascadeTables(issueops.IsActiveWispInTx(ctx, t.tx, id)) {
+	for _, cascaded := range issueops.DeleteCascadeTables(isWisp) {
 		t.dirty.MarkDirty(cascaded)
 	}
 	// storage.Tx.DeleteIssue carries no actor, so the journal rows record none.
@@ -174,14 +184,19 @@ func (t *embeddedTransaction) AddDependency(ctx context.Context, dep *types.Depe
 }
 
 func (t *embeddedTransaction) AddDependencyWithOptions(ctx context.Context, dep *types.Dependency, actor string, addOpts storage.DependencyAddOptions) error {
-	_, _, eventTable, depTable := issueops.WispTableRouting(issueops.IsActiveWispInTx(ctx, t.tx, dep.IssueID))
+	issueTable, _, eventTable, depTable := issueops.WispTableRouting(issueops.IsActiveWispInTx(ctx, t.tx, dep.IssueID))
+	var sourceChanged bool
 	eventWritten, err := issueops.AddDependencyInTx(ctx, t.tx, dep, actor, issueops.AddDependencyOpts{
+		SourceChanged:  &sourceChanged,
 		IsCrossPrefix:  types.ExtractPrefix(dep.IssueID) != types.ExtractPrefix(dep.DependsOnID),
 		SkipCycleCheck: addOpts.SkipCycleCheck,
 		EmitEvent:      addOpts.EmitEvent,
 	})
 	if err != nil {
 		return err
+	}
+	if sourceChanged {
+		t.dirty.MarkDirty(issueTable)
 	}
 	t.dirty.MarkDirty(depTable)
 	// AddDependencyInTx records a dependency_added event on the source's event
@@ -211,10 +226,13 @@ func (t *embeddedTransaction) RemoveDependency(ctx context.Context, issueID, dep
 func (t *embeddedTransaction) RemoveDependencyWithOptions(ctx context.Context, issueID, dependsOnID string, actor string, rmOpts storage.DependencyRemoveOptions) error {
 	// Route dirty marking on the source's wisp status: a wisp-source remove
 	// stages wisp_dependencies/wisp_events, a permanent one dependencies/events.
-	_, _, eventTable, depTable := issueops.WispTableRouting(issueops.IsActiveWispInTx(ctx, t.tx, issueID))
-	eventWritten, err := issueops.RemoveDependencyInTx(ctx, t.tx, issueID, dependsOnID, actor, rmOpts.EmitEvent)
+	issueTable, _, eventTable, depTable := issueops.WispTableRouting(issueops.IsActiveWispInTx(ctx, t.tx, issueID))
+	sourceChanged, eventWritten, err := issueops.RemoveDependencyWithResultInTx(ctx, t.tx, issueID, dependsOnID, actor, rmOpts.EmitEvent)
 	if err != nil {
 		return err
+	}
+	if sourceChanged {
+		t.dirty.MarkDirty(issueTable)
 	}
 	t.dirty.MarkDirty(depTable)
 	// RemoveDependencyInTx records a dependency_removed event on the source's
@@ -236,9 +254,13 @@ func (t *embeddedTransaction) GetDependencyRecords(ctx context.Context, issueID 
 }
 
 func (t *embeddedTransaction) AddLabel(ctx context.Context, issueID, label, actor string) error {
-	_, labelTable, eventTable, _ := issueops.WispTableRouting(issueops.IsActiveWispInTx(ctx, t.tx, issueID))
-	if err := issueops.AddLabelInTx(ctx, t.tx, labelTable, eventTable, issueID, label, actor); err != nil {
+	issueTable, labelTable, eventTable, _ := issueops.WispTableRouting(issueops.IsActiveWispInTx(ctx, t.tx, issueID))
+	changed, err := issueops.AddLabelWithResultInTx(ctx, t.tx, labelTable, eventTable, issueID, label, actor)
+	if err != nil {
 		return err
+	}
+	if changed {
+		t.dirty.MarkDirty(issueTable)
 	}
 	t.dirty.MarkDirty(labelTable)
 	t.dirty.MarkDirty(eventTable)
@@ -246,9 +268,13 @@ func (t *embeddedTransaction) AddLabel(ctx context.Context, issueID, label, acto
 }
 
 func (t *embeddedTransaction) RemoveLabel(ctx context.Context, issueID, label, actor string) error {
-	_, labelTable, eventTable, _ := issueops.WispTableRouting(issueops.IsActiveWispInTx(ctx, t.tx, issueID))
-	if err := issueops.RemoveLabelInTx(ctx, t.tx, labelTable, eventTable, issueID, label, actor); err != nil {
+	issueTable, labelTable, eventTable, _ := issueops.WispTableRouting(issueops.IsActiveWispInTx(ctx, t.tx, issueID))
+	changed, err := issueops.RemoveLabelWithResultInTx(ctx, t.tx, labelTable, eventTable, issueID, label, actor)
+	if err != nil {
 		return err
+	}
+	if changed {
+		t.dirty.MarkDirty(issueTable)
 	}
 	t.dirty.MarkDirty(labelTable)
 	t.dirty.MarkDirty(eventTable)
