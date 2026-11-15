@@ -156,7 +156,7 @@ though some command-result error paths emit the same shape to stdout:
 `{"schema_version": 1, "data": {"error": ..., "code": ..., "hint": ...}}`.
 General JSON-mode errors exit with code 1. A stale guarded write exits with
 code 13 and reports `code: precondition_failed`; see
-[Guarded command writes](../guarded-command-writes.md).
+[Guarded command writes](/guarded-command-writes).
 
 ## Field Contracts by Command
 

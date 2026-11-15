@@ -1,3 +1,8 @@
+---
+title: Guarded command writes
+description: Revision-checked claims and mutations, refusal behavior, and retry limits.
+---
+
 # Guarded command writes
 
 `bd update`, `bd assign`, `bd close` and `bd delete` accept `--if-revision` for one issue. Copy the decimal string from `bd show <id> --json` without converting it through a floating-point number. It is an opaque signed 64-bit equality token, not a sequence number.
