@@ -43,3 +43,17 @@ The command adaptation preserves Jamel Toms's #6030 work and Julian Knutsen's #7
 A refreshed prior-art scan also found #8285/#5793 (label timestamps) and #8026 (delete/comment race characterization). They do not supply this bounded installed-provider contract. #8285 explicitly preserves row_lock; #8026 excludes label/dependency races. No contributor PR or branch was modified, closed or superseded. The stable recovery backport must not be presented as a competing main-line replacement.
 
 Final independent source-review binding: 51 changed/new Go files, deterministic path/content manifest SHA256 `3cf73886f136a19f975867f522f16293092c2282c35916547f4ba3828d0f42c3`. Final lint re-run after safety additions passed with zero native and Windows findings.
+
+## CI follow-through after human approval (2026-11-15)
+
+Klas explicitly approved PR #2 based on the technical review and trade-offs and instructed CI follow-through, landing, installation and real worker proof. The agent-relayed approval is recorded at https://github.com/flownetworks2020/beads/pull/2#issuecomment-6902496317; it is not represented as an automated GitHub human review.
+
+Documentation-only commits a611f1f4 and b14dafce fix inherited freshness findings and register the guarded-command documentation in navigation. Runtime source remains exactly the reviewed 27ff8283 implementation.
+
+Architect review of the bounded CI correction: the release matrix was selecting newer v1.4.0 release candidates for a v1.3.4 maintenance candidate, testing unsupported downgrades. Keep all smoke assertions unchanged and select the newest five published semantic versions at or below the source candidate, including same-version and prerelease sources. Fetch all release pages before filtering; fail closed on invalid candidate/count or no eligible versions. A hard-coded matrix would age and deleting the failing lanes would weaken coverage. The existing golang.org/x/mod/semver dependency provides ordering; no new dependency, runtime behavior or storage change is introduced. This is CI follow-through under the user's approved scope, not a material change to AT1–AT8.
+
+Code-review / security-review: manually reviewed selector, workflow and tests. Inputs enter through quoted shell arguments and JSON; semantic versions are validated before entering the matrix. All API pages are read, draft releases excluded, duplicates removed, semantic ordering retained, errors fail the job. No CI gate is waived. Backend/java review is not applicable to this Go-only CI helper. Prior-art search found no relevant release-selector repair; broad search returned unrelated GraphQL/external-dependency work.
+
+Test: tests first failed for missing implementation, then passed for current-version upgrade, future-version exclusion, prerelease boundary, numeric semantic ordering, duplicates and fail-closed input. Real GitHub release discovery produced v1.3.4, v1.3.4-rc.1, v1.3.3, v1.3.3-rc.1 and v1.3.2. Package lint passed with zero findings. The actual v1.3.4-to-candidate smoke already passed at b14dafce. Fulfils-the-need for this CI correction is a genuine upgrade matrix without altering the runtime repair or asserting installation acceptance. AT7 and AT8 remain pending.
+
+Required `make ci-pr-lint` wrapper: PASS after the selector change (formatting and full lint). Existing full runtime `make test` proof remains applicable because the only new Go package is the isolated CI selector, whose own tests passed; hosted CI reruns the complete required suite on the final head.
