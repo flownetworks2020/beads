@@ -122,6 +122,18 @@ func TestReopenIssueCategorySemantics(t *testing.T) {
 		if err := store.CloseIssue(ctx, targetID, "done", "tester", ""); err != nil {
 			t.Fatalf("CloseIssue: %v", err)
 		}
+		// Wisp close updates the durable projection without publishing it.
+		// Commit that baseline so reopening must publish a real HEAD change,
+		// rather than restore the blocked state committed by AddDependency.
+		commitReopenIssueWorkingSet(t, ctx, store, "seed closed-wisp projection")
+		var baselineBlocked bool
+		if err := store.db.QueryRowContext(ctx,
+			"SELECT is_blocked FROM issues AS OF 'HEAD' WHERE id = ?", dependerID).Scan(&baselineBlocked); err != nil {
+			t.Fatalf("read committed closed-wisp projection: %v", err)
+		}
+		if baselineBlocked {
+			t.Fatal("closed wisp did not unblock the committed durable depender")
+		}
 		before := reopenDoltHead(t, ctx, store)
 
 		if err := store.ReopenIssue(ctx, targetID, "", "tester"); err != nil {
@@ -136,6 +148,13 @@ func TestReopenIssueCategorySemantics(t *testing.T) {
 		}
 		if after := reopenDoltHead(t, ctx, store); after == before {
 			t.Fatal("wisp reopen with durable recomputation did not create a Dolt commit")
+		}
+		if err := store.db.QueryRowContext(ctx,
+			"SELECT is_blocked FROM issues AS OF 'HEAD' WHERE id = ?", dependerID).Scan(&blocked); err != nil {
+			t.Fatalf("read committed reopened projection: %v", err)
+		}
+		if !blocked {
+			t.Fatal("reopened wisp did not re-block the committed durable depender")
 		}
 	})
 

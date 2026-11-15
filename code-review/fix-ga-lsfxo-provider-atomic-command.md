@@ -59,3 +59,15 @@ Test: tests first failed for missing implementation, then passed for current-ver
 Required `make ci-pr-lint` wrapper: PASS after the selector change (formatting and full lint). Existing full runtime `make test` proof remains applicable because the only new Go package is the isolated CI selector, whose own tests passed; hosted CI reruns the complete required suite on the final head.
 
 CI policy follow-up: the workflow's new selector commands also need the repository-wide gms_pure_go build tag even though this helper imports no storage code. Added the tag to both commands without exemptions; the full source-time build-tag policy and selector tests pass. Manual code/security review confirms only the required flag changed.
+
+## Reopen CI fixture correction (2026-11-15)
+
+The exact server-Dolt shard failed because AddDependency now publishes the blocked projection with revision invalidation. Wisp close updates the working projection without publishing it; reopening restored the same HEAD value, so the fixture incorrectly required a nonempty commit. Seed the committed closed-wisp baseline, as the neighboring reopen staging test already does. Assert both the false baseline and true reopened value from HEAD. No production code or gate changes.
+
+Architect / code-review / security-review: the independent debugging skeptic found no blocking issue. This fixture correction preserves the existing publication assertions and does not resolve or conceal unrelated post-commit publication hazards. Backend/java review is inapplicable to this Go test. Existing approved AT1–AT8 scope is unchanged.
+
+Test-first evidence: the original fixture failed against real isolated Linux server Dolt. The corrected focused reopen tests passed without skips, then the complete CI shard 3/16 passed. Initial runner setup attempts lacked source/Git/Dolt identity; these were corrected before the final complete pass. A separate local Docker-forwarding run skipped and is not counted as proof. Required make ci-pr-lint passed with zero native and Windows issues. Required make test passed, exit 0: cmd/bd 605.190s, embeddeddolt 111.511s, total coverage 40.7%.
+
+Prior-art review: upstream #8277 changes reopen reason/history; #8225 and #8239 address performance; #8486 addresses post-commit publication. None replaces this fixture correction. No contributor branch was changed.
+
+Fulfils-the-need: this correction verifies durable reopen publication from a genuinely changed committed baseline. Hosted CI must verify the new PR head. AT7 package/install and AT8 real-worker acceptance remain PENDING.
