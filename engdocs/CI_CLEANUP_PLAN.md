@@ -1,6 +1,6 @@
 # CI Cleanup Plan
 
-Last reviewed: 2026-08-10
+Last reviewed: 2026-11-15
 
 Freshness source: `engdocs/CI_TEST_SURFACE_AUDIT.md`, `.github/workflows/*.yml`,
 `.buildflags`, `.golangci.yml`, `scripts/ci/pr-lint.sh`, `Makefile`, package test
@@ -9,6 +9,15 @@ manifests, and maintainer decision review.
 This document records the agreed target shape for CI cleanup. It is the policy
 and roadmap layer; the current inventory remains in
 [`CI_TEST_SURFACE_AUDIT.md`](CI_TEST_SURFACE_AUDIT.md).
+
+## Pinned-version review (2026-11-15)
+
+This remains a target-shape and historical measurement document, not a claim
+that every promotion has shipped. In the pinned 1.3.4 recovery branch,
+`.github/workflows/pr.yml` still includes macOS and Windows jobs and separate
+policy/lint jobs alongside Build Artifacts. Use the workflow files for the
+currently enforced job graph. The measurements and branch descriptions below
+retain their original historical meaning; they were not remeasured for this refresh.
 
 ## Goals
 

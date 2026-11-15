@@ -3,7 +3,7 @@ title: JSON Output Schema Contract
 description: The stable JSON output contract for bd --json commands, covering the schema_version envelope, per-command fields, and consumer guidelines.
 ---
 
-Last reviewed: 2026-08-07
+Last reviewed: 2026-11-15
 
 Freshness source: `cmd/bd/output.go`, `cmd/bd/errors.go`, and
 `cmd/bd/protocol/json_contract_test.go`.
@@ -154,7 +154,9 @@ though some command-result error paths emit the same shape to stdout:
 `error` and `schema_version` are always present. In envelope mode
 (`BD_JSON_ENVELOPE=1`) the error payload moves inside the envelope:
 `{"schema_version": 1, "data": {"error": ..., "code": ..., "hint": ...}}`.
-JSON-mode errors exit with code 1.
+General JSON-mode errors exit with code 1. A stale guarded write exits with
+code 13 and reports `code: precondition_failed`; see
+[Guarded command writes](../guarded-command-writes.md).
 
 ## Field Contracts by Command
 

@@ -1,6 +1,6 @@
 # Linting Policy
 
-Last reviewed: 2026-08-10
+Last reviewed: 2026-11-15
 
 Freshness source: `.golangci.yml`, `scripts/ci/pr-lint.sh`, `Makefile`,
 `.github/workflows/pr.yml`, and `.github/workflows/main.yml`.
@@ -14,7 +14,7 @@ golangci-lint v2.10.1 release and the same `.golangci.yml`. Each must pass with
 zero issues in its own scope.
 
 - **The PR lane reports only what the PR introduces.** Both of its jobs are
-  scoped to the diff against the merge base with `main`: the `lint` job passes
+  scoped to the diff against the merge base with the PR target branch: the `lint` job passes
   `only-new-issues`, and `pr-lint-wrapper` runs the repository-owned
   `ci-pr-lint` wrapper with `BD_LINT_NEW_FROM_MERGE_BASE`. A finding in code the
   PR did not touch does not block it.
