@@ -1,6 +1,6 @@
 # OpenTelemetry Data Model
 
-Last reviewed: 2026-08-07
+Last reviewed: 2026-11-15
 
 Freshness source: `internal/telemetry/`, `internal/storage/dolt/store.go`,
 `internal/compact/haiku.go`, `cmd/bd/find_duplicates.go`, and hook execution
@@ -421,7 +421,10 @@ Key variables: `BD_OTEL_ENABLED=true` (master switch) plus the standard SDK vars
 
 ## Appendix: Source Reference Audit
 
-Audited against **`main` @ `5eb7c25dd`**. All line numbers below refer to that commit.
+Original audit: **`main` @ `5eb7c25dd`**. All line numbers below refer to that
+commit. The 2026-11-15 source refresh checked the current opt-in rules, storage
+span/metric naming, hook events and AI instrumentation on the 1.3.4 recovery
+branch; it does not turn these historical line numbers into current pointers.
 
 Every metric name, span name, and attribute listed in this document is backed by a specific source location. This table exists to prevent documentation drift and to make re-verification straightforward after code changes.
 

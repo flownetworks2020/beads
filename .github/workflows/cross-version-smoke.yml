@@ -74,6 +74,12 @@ jobs:
     outputs:
       matrix: ${{ steps.resolve.outputs.matrix }}
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: 'go.mod'
+      - name: Test upgrade source selection
+        run: go test -tags=gms_pure_go ./scripts/select-upgrade-versions
       - name: Resolve release versions
         id: resolve
         env:
@@ -81,10 +87,13 @@ jobs:
           # Tag push and manual dispatch test more versions; PRs test fewer for speed
           VERSION_COUNT: ${{ (github.event_name == 'push' && '30') || (github.event_name == 'workflow_dispatch' && inputs.version_count) || '5' }}
         run: |
-          VERSIONS=$(gh release list \
-            --repo gastownhall/beads \
-            --limit "$VERSION_COUNT" \
-            --json tagName \
-            --jq '[.[].tagName]')
+          CANDIDATE="v$(sed -n 's/^[[:space:]]*Version = "\(.*\)"/\1/p' cmd/bd/version.go)"
+          # Read every page before filtering: recent releases can all be newer
+          # than a maintained release branch. Keep prereleases and same-version
+          # upgrades, but never treat a downgrade as an upgrade smoke test.
+          gh api --paginate --slurp repos/gastownhall/beads/releases | \
+            jq '[.[][] | select(.draft == false) | .tag_name]' > /tmp/release-tags.json
+          VERSIONS=$(go run -tags=gms_pure_go ./scripts/select-upgrade-versions \
+            --candidate "$CANDIDATE" --count "$VERSION_COUNT" < /tmp/release-tags.json)
           echo "matrix=$VERSIONS" >> "$GITHUB_OUTPUT"
           echo "Testing versions: $VERSIONS"

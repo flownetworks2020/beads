@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `bd update --if-revision` and the legacy `--if-version` spelling carry the
+  selected token through native claims and metadata changes in one transaction.
+  Adapted from Jamel Toms's [#6030](https://github.com/gastownhall/beads/pull/6030)
+  and Julian Knutsen's [#7203](https://github.com/gastownhall/beads/pull/7203).
+
+- `bd assign`, `bd close`, and `bd delete` accept the same single-issue
+  `--if-revision` guard. Stale writes return a typed refusal without side effects.
+  Close safeguards and molecule completion on retry remain in force.
+  Ownership-check ordering follows Julian Knutsen's [#7216](https://github.com/gastownhall/beads/pull/7216).
+
+### Fixed
+
+- Label and outbound dependency edits invalidate stale selections while preserving
+  no-op revisions. The label invalidation design builds on Stephanie Jarmak's
+  [#5738](https://github.com/gastownhall/beads/pull/5738); dependency invalidation
+  is a separate adaptation, not a claim about that upstream proposal's coverage.
+  Split-session SDK deletions that cannot commit an edge and its source revision
+  together refuse before writing; existing pinned transactions remain supported.
+
 ## [1.3.4] - 2026-11-04
 
 First stable release of the 1.3.4 patch line. It ships the same code as
@@ -1613,6 +1634,7 @@ which dumps the entire release history.)
   matching `gastown__mayor`.
 
 ### Added
+
 
 - **The events journal records WHO performed each mutation.** `bd_events_journal`
   gains an `actor` column (migration 0066 plus its ignored-series twin 0025, so

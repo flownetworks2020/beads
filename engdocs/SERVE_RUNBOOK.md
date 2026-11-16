@@ -1,14 +1,15 @@
 # `bd serve` operator runbook
 
-Last reviewed: 2026-08-10
+Last reviewed: 2026-11-15
 
 Freshness source: `internal/httpapi/server.go`,
 `internal/httpapi/events_watch.go`, `cmd/bd/serve.go` and
 `internal/httpapi/auth.go` — the operating-envelope constants, the fields their
 `event` emitters write, and the flag, posture and token-file rules.
 
-Every flag, error string, event name and reason value quoted below was checked
-against a build of those files, not read off the source.
+The original runtime audit checked the flags, errors and events against a build.
+The 2026-11-15 refresh checked the pinned source and corrected the non-loopback
+example. Historical host measurements below retain their original dates.
 
 Running the v0 HTTP surface. For the contract it serves — the operations, the
 error vocabulary, the cursor, the loopback posture — see
@@ -128,7 +129,8 @@ reaching the address would otherwise be the whole authorization: every peer
 that can reach it gets full read and claim access.
 
 ```
-bd serve --addr 0.0.0.0:7777 --auth-token-file /run/secrets/bd-tokens \
+bd serve --addr 0.0.0.0:7777 --allow-non-loopback \
+         --auth-token-file /run/secrets/bd-tokens \
          --allowed-host bd.internal.example
 ```
 

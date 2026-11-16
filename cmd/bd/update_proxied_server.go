@@ -24,6 +24,9 @@ func runUpdateProxiedServer(cmd *cobra.Command, ctx context.Context, args []stri
 	if err != nil {
 		return err
 	}
+	if in.ifVersion != nil && len(args) != 1 {
+		return HandleErrorRespectJSON("--if-version requires exactly one issue ID")
+	}
 	if isUpdateInputNoop(in) {
 		fmt.Println("No updates specified")
 		return nil
@@ -129,6 +132,7 @@ func applyUpdateProxiedOne(ctx context.Context, id string, in *updateInput) (*ty
 		force:            in.force,
 		expectedAssignee: in.ifAssignee,
 		expectedStatus:   expectedStatus,
+		expectedVersion:  in.ifVersion,
 		provenance:       fmt.Sprintf("bd: update %s", id),
 	})
 	if err != nil {
@@ -139,6 +143,11 @@ func applyUpdateProxiedOne(ctx context.Context, id string, in *updateInput) (*ty
 		// aborting is the right call for both.
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return nil, nil, err
+		}
+		if in.ifVersion != nil {
+			if reported, ok := reportIfRevisionFailure("updating", id, err); ok {
+				return nil, nil, reported
+			}
 		}
 		return nil, proxiedUpdateFailure(id, err), nil
 	}
@@ -205,7 +214,7 @@ func proxiedUpdateTarget(ctx context.Context, id string, in *updateInput) (*type
 	// same transfer inside the mutation with ErrAlreadyClaimed; this pre-read is
 	// what keeps the advice a user reads identical on both routes. A policy
 	// refusal: terminal per-issue failure, exit 1, never GuardMismatch/13.
-	if newAssignee, ok := in.fields["assignee"].(string); ok && in.ifAssignee == nil && !in.claim {
+	if newAssignee, ok := in.fields["assignee"].(string); ok && in.ifAssignee == nil && !in.claim && !ifRevisionAlreadyStale(current, in.ifVersion) {
 		if err := validateIssueReassignable(id, current, actor, newAssignee,
 			proxiedClaimPoolAliases(ctx), in.force); err != nil {
 			fmt.Fprintf(os.Stderr, "%s\n", err)

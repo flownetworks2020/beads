@@ -381,7 +381,7 @@ func ApplyParentPatch(ctx context.Context, tx DBTX, current *types.Issue, parent
 	}
 	var recomputed RecomputeIsBlockedResult
 	for _, parentID := range stringSetDifference(existing, target) {
-		if _, err := removeDependencyInTx(ctx, sqlTx, current.ID, parentID, actor, false, &recomputed); err != nil {
+		if _, err := removeDependencyInTx(ctx, sqlTx, current.ID, parentID, actor, false, &recomputed, nil); err != nil {
 			return ParentPatchResult{}, err
 		}
 	}

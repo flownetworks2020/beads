@@ -854,6 +854,31 @@ func (t *doltTransaction) ReopenIssueWithResult(ctx context.Context, id string, 
 
 func (t *doltTransaction) DeleteIssue(ctx context.Context, id string) error {
 	isWisp := t.isActiveWisp(ctx, id)
+	if !isWisp && t.regularTx != t.ignoredTx {
+		var hasWispSources bool
+		if err := t.txFor("wisp_dependencies").QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM wisp_dependencies WHERE depends_on_issue_id = ? AND issue_id <> ?)", id, id).Scan(&hasWispSources); err != nil {
+			return err
+		}
+		if hasWispSources {
+			return &storage.ErrUnsupported{Op: "Transaction.DeleteIssue with wisp dependency sources", Backend: "dolt split transaction"}
+		}
+	}
+	if isWisp {
+		var hasDurableSources bool
+		if err := t.txFor("dependencies").QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM dependencies WHERE depends_on_wisp_id = ? AND issue_id <> ?)", id, id).Scan(&hasDurableSources); err != nil {
+			return err
+		}
+		if hasDurableSources {
+			// In split mode these writes would commit on ignoredTx AFTER the
+			// regular transaction stages history. Refuse before any deletion;
+			// only the existing pinned transaction can commit edge and token
+			// together. Do not silently publish a token only in the working set.
+			if t.regularTx != t.ignoredTx {
+				return &storage.ErrUnsupported{Op: "Transaction.DeleteIssue with durable dependency sources", Backend: "dolt split transaction"}
+			}
+			t.dirty.MarkDirty("issues")
+		}
+	}
 	table := "issues"
 	if isWisp {
 		table = "wisps"
@@ -901,7 +926,9 @@ func (t *doltTransaction) AddDependencyWithOptions(ctx context.Context, dep *typ
 		}
 	}
 
+	var sourceChanged bool
 	opts := issueops.AddDependencyOpts{
+		SourceChanged:  &sourceChanged,
 		SourceTable:    sourceTable,
 		TargetTable:    targetTable,
 		WriteTable:     table,
@@ -950,6 +977,9 @@ func (t *doltTransaction) AddDependencyWithOptions(ctx context.Context, dep *typ
 	}
 	if addErr != nil {
 		return addErr
+	}
+	if sourceChanged {
+		t.dirty.MarkDirty(sourceTable)
 	}
 	t.dirty.MarkDirty(table)
 	// AddDependencyInTx records a dependency_added event on the source's event
@@ -1111,9 +1141,16 @@ func (t *doltTransaction) RemoveDependencyWithOptions(ctx context.Context, issue
 		table = "wisp_dependencies"
 		eventTable = "wisp_events"
 	}
-	eventWritten, err := issueops.RemoveDependencyInTx(ctx, t.txFor(table), issueID, dependsOnID, actor, rmOpts.EmitEvent)
+	sourceChanged, eventWritten, err := issueops.RemoveDependencyWithResultInTx(ctx, t.txFor(table), issueID, dependsOnID, actor, rmOpts.EmitEvent)
 	if err != nil {
 		return wrapExecError("remove dependency in tx", err)
+	}
+	issueTable := "issues"
+	if table == "wisp_dependencies" {
+		issueTable = "wisps"
+	}
+	if sourceChanged {
+		t.dirty.MarkDirty(issueTable)
 	}
 	t.dirty.MarkDirty(table)
 	// RemoveDependencyInTx records a dependency_removed event on the source's
@@ -1135,8 +1172,16 @@ func (t *doltTransaction) AddLabel(ctx context.Context, issueID, label, actor st
 		eventTable = "wisp_events"
 	}
 
-	if err := issueops.AddLabelInTx(ctx, t.txFor(table), table, eventTable, issueID, label, actor); err != nil {
+	changed, err := issueops.AddLabelWithResultInTx(ctx, t.txFor(table), table, eventTable, issueID, label, actor)
+	if err != nil {
 		return wrapExecError("add label in tx", err)
+	}
+	issueTable := "issues"
+	if table == "wisp_labels" {
+		issueTable = "wisps"
+	}
+	if changed {
+		t.dirty.MarkDirty(issueTable)
 	}
 	t.dirty.MarkDirty(table)
 	t.dirty.MarkDirty(eventTable)
@@ -1175,8 +1220,16 @@ func (t *doltTransaction) RemoveLabel(ctx context.Context, issueID, label, actor
 		eventTable = "wisp_events"
 	}
 
-	if err := issueops.RemoveLabelInTx(ctx, t.txFor(table), table, eventTable, issueID, label, actor); err != nil {
+	changed, err := issueops.RemoveLabelWithResultInTx(ctx, t.txFor(table), table, eventTable, issueID, label, actor)
+	if err != nil {
 		return wrapExecError("remove label in tx", err)
+	}
+	issueTable := "issues"
+	if table == "wisp_labels" {
+		issueTable = "wisps"
+	}
+	if changed {
+		t.dirty.MarkDirty(issueTable)
 	}
 	t.dirty.MarkDirty(table)
 	t.dirty.MarkDirty(eventTable)

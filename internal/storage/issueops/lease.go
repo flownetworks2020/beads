@@ -60,8 +60,10 @@ func leaseTTL(ctx context.Context) time.Duration {
 // INVARIANT: any path that mutates status, assignee, or started_at on an
 // in_progress issue MUST rewrite row_lock — that is the set the reclaim/close
 // races care about (claim, close, updateIssueInTx, reclaim, unclaim all do).
+// Label and outbound dependency changes also remint the token so guarded
+// selections cannot survive changes to their authority snapshot.
 // Paths that touch only orthogonal cells (is_blocked, compaction_level,
-// dependency metadata, rename, or reopen — which acts on closed rows) are safe
+// rename, or reopen — which acts on closed rows) are safe
 // to merge with a reclaim and intentionally do NOT rewrite it. Heartbeats no
 // longer touch the issues row at all (bd-lrgn1): the lease lives in the
 // ephemeral leases table, where a racing heartbeat and reclaim contend on the
@@ -794,4 +796,28 @@ func ReclaimExpiredLeasesInTx(ctx context.Context, tx DBTX, cutoff time.Time, fi
 		reclaimed = append(reclaimed, r)
 	}
 	return reclaimed, nil
+}
+
+// TouchRowVersionInTx remints the revision for issueID in the same
+// transaction as a label or outbound dependency mutation. issueTable is the already
+// resolved "issues" or "wisps" plane that owns the auxiliary row; resolving it
+// again on another Dolt session can route a wisp mutation to the durable plane.
+// Call it only after a genuine mutation; no-ops keep the token stable.
+func TouchRowVersionInTx(ctx context.Context, tx DBTX, issueTable, issueID string) error {
+	if issueTable != "issues" && issueTable != "wisps" {
+		return fmt.Errorf("touch row version for %s: invalid issue table %q", issueID, issueTable)
+	}
+	//nolint:gosec // G201: issueTable is validated above.
+	result, err := tx.ExecContext(ctx, fmt.Sprintf("UPDATE %s SET row_lock = ?, updated_at = updated_at WHERE id = ?", issueTable), freshRowLock(), issueID)
+	if err != nil {
+		return fmt.Errorf("touch row version for %s: %w", issueID, err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("touch row version for %s: rows affected: %w", issueID, err)
+	}
+	if rows == 0 {
+		return fmt.Errorf("%w: issue %s", storage.ErrNotFound, issueID)
+	}
+	return nil
 }

@@ -54,9 +54,10 @@ func (s *DoltStore) addDependencyWithOptions(ctx context.Context, dep *types.Dep
 		}
 	}
 
-	var eventWritten bool
+	var eventWritten, sourceChanged bool
 	if err := s.withRetryTx(ctx, func(tx *sql.Tx) error {
 		opts := issueops.AddDependencyOpts{
+			SourceChanged: &sourceChanged,
 			SourceTable:   "issues",
 			TargetTable:   targetTable,
 			WriteTable:    "dependencies",
@@ -76,6 +77,9 @@ func (s *DoltStore) addDependencyWithOptions(ctx context.Context, dep *types.Dep
 	// idempotent add writes no event, so staging events would sweep unrelated
 	// pending event rows into this dependency commit.
 	tables := []string{"dependencies"}
+	if sourceChanged {
+		tables = append(tables, "issues")
+	}
 	if eventWritten {
 		tables = append(tables, "events")
 	}
@@ -126,7 +130,7 @@ func (s *DoltStore) RemoveDependencyWithOptions(ctx context.Context, issueID, de
 		clearRecheckScope := issueops.ScopeBlockedRecheckTransaction(tx)
 		defer clearRecheckScope()
 
-		eventWritten, err := issueops.RemoveDependencyInTx(ctx, tx, issueID, dependsOnID, actor, rmOpts.EmitEvent)
+		sourceChanged, eventWritten, err := issueops.RemoveDependencyWithResultInTx(ctx, tx, issueID, dependsOnID, actor, rmOpts.EmitEvent)
 		if err != nil {
 			return err
 		}
@@ -144,6 +148,9 @@ func (s *DoltStore) RemoveDependencyWithOptions(ctx context.Context, issueID, de
 		// structural or missing-edge remove writes no event, so staging events would
 		// sweep unrelated pending event rows into this dependency commit.
 		tables := []string{"dependencies"}
+		if sourceChanged {
+			tables = append(tables, "issues")
+		}
 		if eventWritten {
 			tables = append(tables, "events")
 		}

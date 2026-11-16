@@ -74,6 +74,9 @@ func (r *labelSQLRepositoryImpl) Insert(ctx context.Context, issueID, label, act
 		}
 		return nil
 	}
+	if err := issueops.TouchRowVersionInTx(ctx, r.runner, pickIssueTable(opts.UseWispsTable), issueID); err != nil {
+		return err
+	}
 	if err := r.events.Record(ctx, domain.Event{
 		IssueID:  issueID,
 		Type:     types.EventLabelAdded,
@@ -109,6 +112,9 @@ func (r *labelSQLRepositoryImpl) Delete(ctx context.Context, issueID, label, act
 	}
 	if rows == 0 {
 		return nil
+	}
+	if err := issueops.TouchRowVersionInTx(ctx, r.runner, pickIssueTable(opts.UseWispsTable), issueID); err != nil {
+		return err
 	}
 	if err := r.events.Record(ctx, domain.Event{
 		IssueID:  issueID,

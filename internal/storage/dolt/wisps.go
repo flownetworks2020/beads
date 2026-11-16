@@ -327,6 +327,11 @@ func (s *DoltStore) deleteWisp(ctx context.Context, id string) error {
 	if err := issueops.RecordDependencyRemovalsForIssuesInTx(ctx, tx, []string{id}, ""); err != nil {
 		return fmt.Errorf("journal dependency removals for wisp %s: %w", id, err)
 	}
+	for _, table := range []string{"dependencies", "wisp_dependencies"} {
+		if err := issueops.TouchDependencyRemovalSourcesInTx(ctx, tx, table, []string{id}); err != nil {
+			return err
+		}
+	}
 
 	result, err := tx.ExecContext(ctx, "DELETE FROM wisps WHERE id = ?", id)
 	if err != nil {
@@ -430,6 +435,11 @@ func (s *DoltStore) deleteWispBatchTx(ctx context.Context, ids []string) (int, e
 	// The batched wisp delete surface carries no actor, so these record none.
 	if err := issueops.RecordDependencyRemovalsForIssuesInTx(ctx, tx, deletedIDs, ""); err != nil {
 		return 0, fmt.Errorf("journal dependency removals for batched wisp delete: %w", err)
+	}
+	for _, table := range []string{"dependencies", "wisp_dependencies"} {
+		if err := issueops.TouchDependencyRemovalSourcesInTx(ctx, tx, table, deletedIDs); err != nil {
+			return 0, err
+		}
 	}
 
 	inClause, args := doltBuildSQLInClause(ids)

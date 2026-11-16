@@ -74,3 +74,10 @@ func uowClaimPoolAliases(ctx context.Context, uw uow.UnitOfWork) func() []string
 		return issueops.ParseClaimPools(raw)
 	}
 }
+
+// ifRevisionAlreadyStale leaves a known-lost selection to the transaction's
+// revision check. Otherwise an advisory reassign fence masks a stale result
+// as an ordinary policy refusal. The guarded write still enforces ownership.
+func ifRevisionAlreadyStale(issue *types.Issue, revision *int64) bool {
+	return revision != nil && issue != nil && issue.RowVersion != *revision
+}
